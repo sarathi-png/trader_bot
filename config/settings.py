@@ -1,0 +1,82 @@
+import os
+from dataclasses import dataclass, field
+from typing import List
+from dotenv import load_dotenv
+
+
+@dataclass
+class Settings:
+    # Quotex
+    quotex_email: str = ""
+    quotex_password: str = ""
+    quotex_ssid: str = ""
+    quotex_demo: bool = True
+
+    # Telegram
+    telegram_token: str = ""
+    allowed_users: List[int] = field(default_factory=list)
+
+    # Signal Engine
+    min_confidence: int = 50
+    min_payout: int = 80
+    max_signals_per_day: int = 15
+
+    # Database
+    db_path: str = "data/signals.db"
+    db_retention_days: int = 8
+
+    # Sessions
+    sessions_dir: str = "sessions"
+
+    # Session Filters (UTC hours to block)
+    blocked_hours: List[int] = field(default_factory=lambda: [1, 11, 17, 20])
+
+    # Asset Categories
+    categories: List[str] = field(default_factory=lambda: [
+        "CURRENCIES", "CRYPTO", "COMMODITIES", "STOCKS"
+    ])
+
+    # Duration Options
+    durations: List[str] = field(default_factory=lambda: [
+        "1min", "3min", "5min", "15min"
+    ])
+
+    # News Filter
+    news_filter_enabled: bool = True
+    news_window_minutes: int = 30
+    news_refresh_hours: int = 6
+
+    # Logging
+    log_level: str = "INFO"
+    log_file: str = "logs/bot.log"
+
+    @classmethod
+    def from_env(cls):
+        load_dotenv()
+
+        allowed = os.getenv("TELEGRAM_ALLOWED_USERS", "")
+        allowed_list = [int(x.strip()) for x in allowed.split(",") if x.strip()]
+
+        blocked = os.getenv("BLOCKED_HOURS", "1,11,17,20")
+        blocked_list = [int(x.strip()) for x in blocked.split(",") if x.strip()]
+
+        return cls(
+            quotex_email=os.getenv("QUOTEX_EMAIL", ""),
+            quotex_password=os.getenv("QUOTEX_PASSWORD", ""),
+            quotex_ssid=os.getenv("QUOTEX_SSID", ""),
+            quotex_demo=os.getenv("QUOTEX_DEMO", "true").lower() == "true",
+            telegram_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
+            allowed_users=allowed_list,
+            min_confidence=int(os.getenv("MIN_CONFIDENCE", "50")),
+            min_payout=int(os.getenv("MIN_PAYOUT", "80")),
+            max_signals_per_day=int(os.getenv("MAX_SIGNALS_PER_DAY", "15")),
+            db_path=os.getenv("DB_PATH", "data/signals.db"),
+            db_retention_days=int(os.getenv("DB_RETENTION_DAYS", "8")),
+            sessions_dir=os.getenv("SESSIONS_DIR", "sessions"),
+            blocked_hours=blocked_list,
+            log_level=os.getenv("LOG_LEVEL", "INFO"),
+            log_file=os.getenv("LOG_FILE", "logs/bot.log"),
+            news_filter_enabled=os.getenv("NEWS_FILTER_ENABLED", "true").lower() == "true",
+            news_window_minutes=int(os.getenv("NEWS_WINDOW_MINUTES", "30")),
+            news_refresh_hours=int(os.getenv("NEWS_REFRESH_HOURS", "6")),
+        )

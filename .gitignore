@@ -1,0 +1,43 @@
+# ============================================================
+# Quotex Signal Bot — .gitignore
+# Prevent live credentials and build artifacts from entering
+# version control or being distributed with the source.
+# ============================================================
+
+# --- Secrets (never commit) ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# --- Session/SSID cache (live auth tokens) ---
+sessions/
+session.json
+
+# --- Runtime database (contains trading data) ---
+data/*.db
+data/*.db-shm
+data/*.db-wal
+
+# --- Logs ---
+logs/
+*.log
+
+# --- Virtual environment (OS-specific; recreate per target) ---
+.venv/
+venv/
+env/
+
+# --- Python caches ---
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Tooling ---
+.idea/
+.vscode/
+*.swp
