@@ -1,6 +1,7 @@
 import aiosqlite
 import json
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from .models import Candle, Signal, User, Asset, PerformanceStats
@@ -14,6 +15,11 @@ class Database:
         self.db: Optional[aiosqlite.Connection] = None
 
     async def connect(self):
+        # Zip-upload hosts (e.g. Tranger Cloud) start from a fresh filesystem
+        # with no data/ dir — create the parent so first boot can't crash.
+        parent = os.path.dirname(self.db_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
         self.db = await aiosqlite.connect(self.db_path)
         await self.db.execute("PRAGMA journal_mode=WAL")
         await self._create_tables()
