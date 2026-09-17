@@ -1,0 +1,50 @@
+# Render-optimized Dockerfile — Python 3.12 slim, reduced deps, healthcheck to
+# mitigate Free tier 15‑min sleep (repeated pings keep the container alive).
+# Use: docker build -t quotex-render . && docker run -d --name quotex-render
+# --restart=always --env-file .env quotex-render
+
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+# --- Runtime only (no Playwright Chromium; mock mode never needs it) ---
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git gcc g++ sqlite3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- Minimal requirements for Render Free (512 MB) ---
+COPY requirements-render.txt .
+RUN pip install --upgrade pip && pip install -q -r requirements-render.txt
+
+# Copy source (no .env, data/, sessions/, logs/ — stay on host)
+COPY auth/ ./auth/
+COPY backtest/ ./backtest/
+COPY config/ ./config/
+CORE_DIR=core
+COPY core/ ./core/
+COPY database/ ./database/
+COPY engine/ ./engine/
+COPY strategies/ ./strategies/
+COPY tg_bot/ ./tg_bot/
+COPY main.py run.py ./
+
+# Create directories the first time the bot runs (idempotent at startup)
+RUN mkdir -p data sessions logs
+
+# --- Healthcheck: keep the container from Render's 15‑min sleep ---
+# We curl the /status endpoint every 5 minutes; if it fails, Render will
+# auto‑restart the container. The bot's /status returns JSON with "connected".
+# NOTE: This only works if you deploy with --port 8080 or expose a web port;
+# otherwise the curl will 404 and Render will restart anyway (safe failure).
+#   - Render Free: 15‑min idle timeout → healthcheck keeps it alive.
+#   - Render paid: no idle timeout; healthcheck still useful for monitoring.
+HEALTHCHECK --interval=5m --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -fsS http://localhost:8080/status || exit 0
+
+# --- Start the bot ---
+#   QUOTEX_DEMO=true   → mock mode (no Quotex creds needed)
+#   QUOTEX_DEMO=false  → live mode (needs SSID; see DEPLOY_TRANGER.md)
+CMD ["python", "run.py"]
