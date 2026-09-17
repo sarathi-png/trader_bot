@@ -19,6 +19,7 @@ session.json
 data/*.db
 data/*.db-shm
 data/*.db-wal
+data/*.bak-*
 
 # --- Logs ---
 logs/
