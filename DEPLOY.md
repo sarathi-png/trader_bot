@@ -133,6 +133,33 @@ docker logs -f quotex-bot
 
 `.env` and state stay outside the image (see `.dockerignore`).
 
+## 5b. Mock smoke test (prove the plumbing before credentials)
+
+Before putting real Quotex credentials on the box, confirm the bot boots,
+scores, and delivers Telegram cards with simulated data. `run.py` selects
+mock mode automatically whenever no real email is configured — an untouched
+copy of `config/.env.example` (`QUOTEX_EMAIL=your_email@example.com`) is
+already mock:
+
+1. Speed the smoke test up in `.env` (match the verified local run):
+   ```bash
+   MOCK_SIGNAL_INTERVAL=10
+   NEWS_FILTER_ENABLED=false
+   ```
+   `sudo systemctl restart quotex-bot`
+2. Expect the proven signature within seconds of boot:
+   - `sudo journalctl -u quotex-bot -f` → `Running in MOCK mode with
+     simulated data`, then `Signal generated: EURUSD_otc CALL (57%)` etc.
+   - Telegram → your bot → `/status` → `mode: mock`, `connected: True`.
+   - Signal cards arrive (EURUSD/GBPUSD/USDJPY CALL, XAUUSD/AAPL PUT).
+   - Each new row is `PENDING` in `data/signals.db`; `/stats` populates.
+3. Once green: restore `.env` (`MOCK_SIGNAL_INTERVAL=60`,
+   `NEWS_FILTER_ENABLED=true` if desired), fill in the real `QUOTEX_EMAIL` /
+   `QUOTEX_PASSWORD`, restart, and continue to §6 (SSID) → §7 (demo verify).
+
+If the smoke test fails here, the problem is the box (venv, deps, `.env`) —
+not Quotex. Fix it before burning an SSID cycle.
+
 ## 6. SSID strategy (the one cloud gotcha)
 
 The SSID (Quotex session token) cached in `sessions/session.json` expires
