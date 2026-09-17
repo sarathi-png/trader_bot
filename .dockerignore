@@ -1,0 +1,19 @@
+# Keep secrets and host state out of the image.
+.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+sessions/
+data/
+logs/
+*.db
+*.db-shm
+*.db-wal
+*.bak-*
+.git/
+.gitignore
+.vscode/
+deploy/
+*.md

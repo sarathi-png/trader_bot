@@ -37,6 +37,13 @@ class SignalFormatter:
             f"Payout:     {signal.payout}%{mtf_text}\n"
             f"Strategies: {strategies_text}\n"
             f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"📖 How to place this trade:\n"
+            f"1. Open Quotex, select <b>{signal.asset}</b>\n"
+            f"2. Choose <b>{direction_text}</b>\n"
+            f"3. Set expiry to <b>{signal.duration}</b>\n"
+            f"4. Enter amount (max 2% of account)\n"
+            f"5. Tap BUY and confirm\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             f"⚠️ Risk: Max 2% of account per trade"
         )
 

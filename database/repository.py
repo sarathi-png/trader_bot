@@ -62,6 +62,7 @@ class Database:
                 quiet_hours_start INTEGER DEFAULT 23,
                 quiet_hours_end INTEGER DEFAULT 7,
                 enabled INTEGER DEFAULT 1,
+                favorite_assets TEXT DEFAULT '[]',
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -96,6 +97,12 @@ class Database:
             await self.db.execute("ALTER TABLE signals ADD COLUMN actual_entry_price REAL")
             logger.info("Migrated signals table: added actual_entry_price column")
 
+        cursor = await self.db.execute("PRAGMA table_info(users)")
+        columns = [r[1] for r in await cursor.fetchall()]
+        if "favorite_assets" not in columns:
+            await self.db.execute("ALTER TABLE users ADD COLUMN favorite_assets TEXT DEFAULT '[]'")
+            logger.info("Migrated users table: added favorite_assets column")
+
     async def cleanup_old_candles(self, retention_days: int):
         cutoff = int((datetime.now() - timedelta(days=retention_days)).timestamp())
         await self.db.execute("DELETE FROM candles WHERE timestamp < ?", (cutoff,))
@@ -106,6 +113,16 @@ class Database:
         await self.db.execute(
             "INSERT OR REPLACE INTO candles (timestamp, asset, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (candle.timestamp, candle.asset, candle.open, candle.high, candle.low, candle.close, candle.volume)
+        )
+        await self.db.commit()
+
+    async def save_candles_bulk(self, candles: List[Candle]):
+        """Insert many candles in a single transaction (fast seeding/backfill)."""
+        if not candles:
+            return
+        await self.db.executemany(
+            "INSERT OR REPLACE INTO candles (timestamp, asset, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [(c.timestamp, c.asset, c.open, c.high, c.low, c.close, c.volume) for c in candles]
         )
         await self.db.commit()
 
@@ -200,16 +217,16 @@ class Database:
     # User operations
     async def save_user(self, user: User):
         await self.db.execute(
-            "INSERT OR REPLACE INTO users (telegram_id, username, categories, duration, frequency, quiet_hours_start, quiet_hours_end, enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO users (telegram_id, username, categories, duration, frequency, quiet_hours_start, quiet_hours_end, enabled, favorite_assets) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (user.telegram_id, user.username, json.dumps(user.categories),
              user.duration, user.frequency, user.quiet_hours_start, user.quiet_hours_end,
-             1 if user.enabled else 0)
+             1 if user.enabled else 0, json.dumps(user.favorite_assets))
         )
         await self.db.commit()
 
     async def get_user(self, telegram_id: int) -> Optional[User]:
         cursor = await self.db.execute(
-            "SELECT telegram_id, username, categories, duration, frequency, quiet_hours_start, quiet_hours_end, enabled FROM users WHERE telegram_id = ?",
+            "SELECT telegram_id, username, categories, duration, frequency, quiet_hours_start, quiet_hours_end, enabled, favorite_assets FROM users WHERE telegram_id = ?",
             (telegram_id,)
         )
         row = await cursor.fetchone()
@@ -220,12 +237,13 @@ class Database:
             categories=json.loads(row[2]) if row[2] else [],
             duration=row[3], frequency=row[4],
             quiet_hours_start=row[5], quiet_hours_end=row[6],
-            enabled=bool(row[7])
+            enabled=bool(row[7]),
+            favorite_assets=json.loads(row[8]) if row[8] else []
         )
 
-    async def get_eligible_users(self, category: str, duration: str) -> List[User]:
+    async def get_eligible_users(self, category: str, duration: str, asset: str = "") -> List[User]:
         cursor = await self.db.execute(
-            "SELECT telegram_id, username, categories, duration, frequency, quiet_hours_start, quiet_hours_end, enabled FROM users WHERE enabled = 1 AND duration = ?",
+            "SELECT telegram_id, username, categories, duration, frequency, quiet_hours_start, quiet_hours_end, enabled, favorite_assets FROM users WHERE enabled = 1 AND duration = ?",
             (duration,)
         )
         rows = await cursor.fetchall()
@@ -236,9 +254,14 @@ class Database:
                 categories=json.loads(r[2]) if r[2] else [],
                 duration=r[3], frequency=r[4],
                 quiet_hours_start=r[5], quiet_hours_end=r[6],
-                enabled=bool(r[7])
+                enabled=bool(r[7]),
+                favorite_assets=json.loads(r[8]) if r[8] else []
             )
-            if category in user.categories:
+            if user.favorite_assets:
+                # Pair-first flow: favorites override category filtering.
+                if asset and asset in user.favorite_assets:
+                    users.append(user)
+            elif category in user.categories:
                 users.append(user)
         return users
 

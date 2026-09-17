@@ -1,0 +1,37 @@
+# Quotex Signal Bot — systemd unit for Oracle Cloud Always Free (Ubuntu).
+#
+# Installed by deploy/setup-oracle.sh to /etc/systemd/system/quotex-bot.service.
+# Placeholders INSTALL_DIR and SERVICE_USER are substituted at install time
+# (defaults: /opt/quotex-signal-bot, ubuntu).
+#
+# Manage with:
+#   sudo systemctl status quotex-bot
+#   sudo systemctl restart quotex-bot
+#   sudo journalctl -u quotex-bot -f        # service output (bot also logs to logs/bot.log)
+
+[Unit]
+Description=Quotex Signal Bot (Telegram signals, manual execution)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=SERVICE_USER
+WorkingDirectory=INSTALL_DIR
+# .env supplies QUOTEX_*, TELEGRAM_*, and engine tuning. run.py also loads
+# it via python-dotenv; this makes the same values visible to child processes.
+EnvironmentFile=INSTALL_DIR/.env
+# Shared Playwright browser store (created by setup-oracle.sh).
+Environment=PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+ExecStart=INSTALL_DIR/.venv/bin/python run.py
+Restart=always
+RestartSec=10
+# Keep both streams in the bot log next to the app's own FileHandler output.
+StandardOutput=append:INSTALL_DIR/logs/bot.log
+StandardError=append:INSTALL_DIR/logs/bot.log
+# Least privilege: no new privileges, private /tmp.
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

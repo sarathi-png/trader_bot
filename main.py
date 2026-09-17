@@ -34,10 +34,11 @@ class QuotexSignalBot:
             refresh_hours=settings.news_refresh_hours,
         )
         self.telegram_bot = TelegramBot(settings, self.db)
+        self.telegram_bot.handlers.connection_status_provider = self.get_connection_status
 
         if use_mock:
             self.connection = MockQuotexConnection()
-            self.candle_collector = MockCandleCollector(self.db)
+            self.candle_collector = MockCandleCollector(self.db, interval_seconds=settings.mock_signal_interval)
         else:
             self.connection = QuotexConnection(
                 email=settings.quotex_email,
@@ -51,7 +52,10 @@ class QuotexSignalBot:
         self._analysis_task: Optional[asyncio.Task] = None
         self._cleanup_task: Optional[asyncio.Task] = None
         self._result_task: Optional[asyncio.Task] = None
+        self._watchdog_task: Optional[asyncio.Task] = None
         self._last_signal: dict = {}
+        self._connected = False
+        self._collection_started = False
 
     @staticmethod
     def _parse_duration_minutes(duration: str) -> int:
@@ -72,13 +76,23 @@ class QuotexSignalBot:
         self.telegram_bot.setup()
         await self.telegram_bot.start()
 
-        if not self.use_mock:
+        if self.use_mock:
+            await self.candle_collector.start_collection()
+            self._connected = True
+            self._collection_started = True
+        else:
+            # Non-fatal: keep Telegram and the scheduler alive even if the
+            # first connection attempt fails. A watchdog retries in the
+            # background and starts candle collection once connected.
             connected = await self.connection.connect()
-            if not connected:
-                logger.error("Failed to connect to Quotex")
-                return
-
-        await self.candle_collector.start_collection()
+            if connected:
+                self._connected = True
+                await self.candle_collector.start_collection()
+                self._collection_started = True
+                self._watchdog_task = asyncio.create_task(self._connection_watchdog())
+            else:
+                logger.error("Initial Quotex connection failed; watchdog will retry")
+                self._watchdog_task = asyncio.create_task(self._connection_watchdog())
 
         self.event_bus.on(Events.SIGNAL_GENERATED, self._on_signal_generated)
 
@@ -95,6 +109,35 @@ class QuotexSignalBot:
 
         await asyncio.Event().wait()
 
+    async def _connection_watchdog(self):
+        """Retry the live Quotex connection until it succeeds, then start
+        candle collection. Runs only in live mode."""
+        while self.running:
+            if self._connected:
+                return
+            try:
+                connected = await self.connection.connect()
+                if connected:
+                    self._connected = True
+                    await self.candle_collector.start_collection()
+                    self._collection_started = True
+                    logger.info("Quotex connection established via watchdog")
+                    return
+                logger.warning("Quotex connection retry failed; retrying in 60s")
+            except Exception as e:
+                logger.error(f"Quotex connection watchdog error: {e}")
+            await asyncio.sleep(60)
+
+    def get_connection_status(self) -> dict:
+        """Current connection state for /status."""
+        if self.use_mock:
+            return {"connected": True, "mode": "mock", "collection_started": True}
+        return {
+            "connected": self._connected,
+            "mode": "live",
+            "collection_started": self._collection_started,
+        }
+
     async def stop(self):
         self.running = False
         if self._analysis_task:
@@ -103,6 +146,8 @@ class QuotexSignalBot:
             self._cleanup_task.cancel()
         if self._result_task:
             self._result_task.cancel()
+        if self._watchdog_task:
+            self._watchdog_task.cancel()
         if hasattr(self.candle_collector, "stop_collection"):
             await self.candle_collector.stop_collection()
         await self.telegram_bot.stop()

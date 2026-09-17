@@ -220,12 +220,51 @@ class CandleCollector:
 
 
 class MockCandleCollector:
-    """Mock collector for testing"""
+    """Mock collector for testing.
 
-    def __init__(self, db: Database):
+    Seeds historical candles once, then runs a realtime simulation loop that
+    appends a new candle per asset every ``interval_seconds`` so the analysis
+    engine sees fresh data and actually generates signals.
+
+    Each asset runs a perpetual phase machine (TREND → DIP → B1 → B2 →
+    RECOVER) whose two-stage bounce — a small +0.2% candle then a +0.6%
+    impulse after an 8-candle ≈-2.4% dip, inside a net-positive drift — aligns
+    BOLLINGER + ZIGZAG_DEMARK + MACD_SR + STOCH_RSI on a single candle
+    (scorer base ≈52) with an agreeing MTF trend (final ≈57-60). PUT-biased
+    assets mirror the pattern. Shape verified by parameter search over the
+    real scorer + MTF analyzer (83% hit rate across 30 seeds per side).
+    """
+
+    # Directional bias per mock asset: +1 = CALL pattern (up-drift with
+    # down-dips), -1 = mirrored PUT pattern. Unknown assets default to +1.
+    _ASSET_BIAS = {
+        "EURUSD_otc": 1, "GBPUSD_otc": 1, "USDJPY_otc": 1, "BTCUSD_otc": 1,
+        "ETHUSD_otc": -1, "XAUUSD_otc": -1, "AAPL_otc": -1,
+    }
+    _SEED_COUNT = 260
+    _TREND_LEN = (70, 100)
+    _TREND_DRIFT = 0.0005
+    _TREND_NOISE = 0.0004
+    _DIP_LEN = 8
+    _DIP_DRIFT = 0.003
+    _DIP_NOISE = 0.0003
+    _B1_DRIFT = 0.002
+    _B2_DRIFT = 0.006
+    _BOUNCE_NOISE = 0.00015
+    _RECOVER_LEN = 20
+    _RECOVER_DRIFT = 0.0006
+    _RECOVER_NOISE = 0.0003
+
+    def __init__(self, db: Database, interval_seconds: int = 60):
         self.db = db
         self.callbacks = []
         self.assets = []
+        self.interval_seconds = max(5, interval_seconds)
+        self._sim_task: Optional[asyncio.Task] = None
+        self._last_price: Dict[str, float] = {}
+        self._last_ts: Dict[str, int] = {}
+        # per-asset phase-machine state: {"bias", "phase", "left"}
+        self._mock_state: Dict[str, dict] = {}
 
     def on_new_candle(self, callback):
         self.callbacks.append(callback)
@@ -244,28 +283,146 @@ class MockCandleCollector:
             await self.db.save_asset(a)
             self.assets.append(a)
 
-    async def simulate_candles(self, asset_name: str, count: int = 100):
+    def _base_price(self, asset_name: str) -> float:
+        if "EUR" in asset_name or "GBP" in asset_name:
+            return 1.1000
+        if "JPY" in asset_name:
+            return 150.0
+        if "BTC" in asset_name:
+            return 60000.0
+        if "ETH" in asset_name:
+            return 3000.0
+        if "XAU" in asset_name:
+            return 2400.0
+        return 200.0  # stocks
+
+    def _mock_init(self, asset_name: str, trend_len: Optional[int] = None):
+        """(Re)initialize an asset's phase machine at the TREND phase."""
         import random
-        base = 1.1000 if "EUR" in asset_name else 1.3000 if "GBP" in asset_name else 150.0
+        self._mock_state[asset_name] = {
+            "bias": self._ASSET_BIAS.get(asset_name, 1),
+            "phase": "TREND",
+            "left": trend_len if trend_len is not None
+                    else random.randint(*self._TREND_LEN),
+        }
+
+    def _make_candle(self, asset_name: str, ts: int) -> Candle:
+        """One candle from the asset's signal-pattern phase machine.
+
+        All drifts are relative, so the shape works at any price magnitude
+        (FX ~1.1 through BTC ~60000).
+        """
+        import random
+        base = self._last_price.get(asset_name, self._base_price(asset_name))
+
+        st = self._mock_state.get(asset_name)
+        if st is None:
+            self._mock_init(asset_name)
+            st = self._mock_state[asset_name]
+        bias, phase = st["bias"], st["phase"]
+
+        if phase == "TREND":
+            drift, noise, wick = bias * self._TREND_DRIFT, self._TREND_NOISE, 0.5
+            nxt, n = "DIP", self._DIP_LEN
+        elif phase == "DIP":
+            drift = -bias * self._DIP_DRIFT * random.uniform(0.95, 1.05)
+            noise, wick = self._DIP_NOISE, 0.5
+            nxt, n = "B1", 1
+        elif phase == "B1":
+            drift = bias * self._B1_DRIFT * random.uniform(0.95, 1.05)
+            noise, wick = self._BOUNCE_NOISE, 0.3
+            nxt, n = "B2", 1
+        elif phase == "B2":
+            drift = bias * self._B2_DRIFT * random.uniform(0.95, 1.05)
+            noise, wick = self._BOUNCE_NOISE, 0.3
+            nxt, n = "RECOVER", self._RECOVER_LEN
+        else:  # RECOVER
+            drift, noise, wick = bias * self._RECOVER_DRIFT, self._RECOVER_NOISE, 0.5
+            nxt, n = "TREND", random.randint(*self._TREND_LEN)
+
+        st["left"] -= 1
+        if st["left"] <= 0:
+            st["phase"], st["left"] = nxt, n
+
+        o = base
+        c = o * (1 + drift + random.uniform(-noise, noise))
+        body = abs(c - o)
+        high = max(o, c) + body * random.uniform(0, wick) + o * 0.00005
+        low = min(o, c) - body * random.uniform(0, wick) - o * 0.00005
+        self._last_price[asset_name] = c
+        return Candle(
+            timestamp=ts,
+            asset=asset_name,
+            open=o,
+            high=high,
+            low=low,
+            close=c,
+            volume=random.randint(100, 1000),
+        )
+
+    async def simulate_candles(self, asset_name: str, count: int = 100):
+        # Seed so the stream ends exactly on a B1 bounce candle: a long TREND
+        # followed by DIP(8) + B1. The last seeded candle is then a proven
+        # confluence candle (all four strategies + agreeing MTF), so the
+        # first analysis pass can fire immediately. Live appends continue
+        # with B2 -> RECOVER -> TREND -> ...
+        self._mock_init(asset_name, trend_len=max(1, count - 9))
         now = int(datetime.now().timestamp())
+        candles = []
         for i in range(count):
-            change = random.uniform(-0.002, 0.002)
-            o = base * (1 + change)
-            c = o * (1 + random.uniform(-0.001, 0.001))
-            candle = Candle(
-                timestamp=now - (count - i) * 60,
-                asset=asset_name, open=o,
-                high=max(o, c) * 1.0005,
-                low=min(o, c) * 0.9995,
-                close=c, volume=random.randint(100, 1000)
-            )
-            await self.db.save_candle(candle)
-            base = c
+            ts = now - (count - i) * 60
+            candles.append(self._make_candle(asset_name, ts))
+        await self.db.save_candles_bulk(candles)
+        self._last_ts[asset_name] = candles[-1].timestamp
+
+    async def _append_simulated_candle(self, asset: Asset):
+        """Append one fresh candle continuing the last simulated price.
+
+        The timestamp is always >= the last candle's timestamp + 1 minute and
+        >= the current minute, so the analysis engine sees strictly fresh data
+        and the candle never collides with (overwrites) historical candles.
+        """
+        current_minute = int(datetime.now().timestamp()) // 60 * 60
+        ts = max(current_minute, self._last_ts.get(asset.name, 0) + 60)
+        candle = self._make_candle(asset.name, ts)
+        await self.db.save_candle(candle)
+        self._last_ts[asset.name] = ts
+        for callback in self.callbacks:
+            try:
+                await callback(asset.name, candle)
+            except Exception as e:
+                logger.error(f"Mock candle callback error for {asset.name}: {e}")
+
+    async def _simulation_loop(self):
+        logger.info(f"Mock candle simulation started (interval={self.interval_seconds}s)")
+        # Sleep first: the seed ends on a proven confluence candle and the
+        # analysis loop must evaluate it before fresh appends bury it.
+        await asyncio.sleep(self.interval_seconds)
+        while True:
+            try:
+                for asset in self.assets:
+                    await self._append_simulated_candle(asset)
+                await asyncio.sleep(self.interval_seconds)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Mock simulation error: {e}")
+                await asyncio.sleep(self.interval_seconds)
 
     async def start_collection(self):
         await self.discover_assets()
         for asset in self.assets:
-            await self.simulate_candles(asset.name, 200)
+            await self.simulate_candles(asset.name, self._SEED_COUNT)
+        self._sim_task = asyncio.create_task(self._simulation_loop())
 
     async def stop_collection(self):
-        pass
+        if self._sim_task:
+            self._sim_task.cancel()
+            try:
+                await self._sim_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                pass
+            self._sim_task = None
+            logger.info("Mock candle collection stopped")

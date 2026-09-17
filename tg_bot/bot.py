@@ -1,12 +1,13 @@
 import logging
 from typing import Optional
 from telegram import Update, BotCommand
-from telegram.ext import Application, CommandHandler, CallbackContext
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, CallbackContext
 from config.settings import Settings
 from database.repository import Database
 from database.models import User
 from tg_bot.commands import CommandHandlers
 from tg_bot.signals import SignalFormatter
+from tg_bot.keyboards import signal_action_buttons
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,7 @@ class TelegramBot:
         self.app.add_handler(CommandHandler("backtest", self.handlers.show_backtest))
         self.app.add_handler(CommandHandler("status", self.handlers.show_status))
         self.app.add_handler(CommandHandler("calendar", self.handlers.show_calendar))
+        self.app.add_handler(CallbackQueryHandler(self.handlers.on_callback))
 
         logger.info("Telegram bot handlers registered")
 
@@ -86,7 +88,8 @@ class TelegramBot:
             await self.app.bot.send_message(
                 chat_id=user.telegram_id,
                 text=message,
-                parse_mode="HTML"
+                parse_mode="HTML",
+                reply_markup=signal_action_buttons(signal.id)
             )
         except Exception as e:
             logger.error(f"Failed to send signal to {user.telegram_id}: {e}")
@@ -117,7 +120,8 @@ class TelegramBot:
         category = await self.db.get_asset_category(signal.asset)
         eligible = await self.db.get_eligible_users(
             category=category,
-            duration=signal.duration
+            duration=signal.duration,
+            asset=signal.asset
         )
         for user in eligible:
             if signal.confidence < self._frequency_threshold(user.frequency):
@@ -134,7 +138,8 @@ class TelegramBot:
         category = await self.db.get_asset_category(signal.asset)
         eligible = await self.db.get_eligible_users(
             category=category,
-            duration=signal.duration
+            duration=signal.duration,
+            asset=signal.asset
         )
         for user in eligible:
             if signal.confidence < self._frequency_threshold(user.frequency):

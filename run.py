@@ -33,7 +33,7 @@ async def run_login(settings: Settings):
         email=settings.quotex_email,
         password=settings.quotex_password,
         force_refresh=True,
-        headless=False,
+        headless=settings.quotex_headless,
         is_demo=settings.quotex_demo,
     )
 

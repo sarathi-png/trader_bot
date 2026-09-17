@@ -555,7 +555,8 @@ if __name__ == "__main__":
             email = input("Email: ").strip()
             password = input("Password: ").strip()
 
-        ssid = await get_or_refresh_ssid(email=email, password=password, headless=False)
+        headless = os.environ.get("QUOTEX_HEADLESS", "false").lower() == "true"
+        ssid = await get_or_refresh_ssid(email=email, password=password, headless=headless)
         if ssid:
             print(f"\nSuccess! SSID: {ssid[:12]}...")
             print(f"Saved to: {SESSION_FILE}")

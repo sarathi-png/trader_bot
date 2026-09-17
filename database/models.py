@@ -46,6 +46,7 @@ class User:
     quiet_hours_start: int = 23
     quiet_hours_end: int = 7
     enabled: bool = True
+    favorite_assets: List[str] = field(default_factory=list)
     created_at: Optional[datetime] = None
 
     def __post_init__(self):

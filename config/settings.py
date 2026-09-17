@@ -11,6 +11,9 @@ class Settings:
     quotex_password: str = ""
     quotex_ssid: str = ""
     quotex_demo: bool = True
+    # Headless Chromium for --login (servers / scheduled refresh). Default
+    # False preserves the interactive first-login browser window.
+    quotex_headless: bool = False
 
     # Telegram
     telegram_token: str = ""
@@ -46,6 +49,9 @@ class Settings:
     news_window_minutes: int = 30
     news_refresh_hours: int = 6
 
+    # Mock mode
+    mock_signal_interval: int = 60
+
     # Logging
     log_level: str = "INFO"
     log_file: str = "logs/bot.log"
@@ -65,6 +71,7 @@ class Settings:
             quotex_password=os.getenv("QUOTEX_PASSWORD", ""),
             quotex_ssid=os.getenv("QUOTEX_SSID", ""),
             quotex_demo=os.getenv("QUOTEX_DEMO", "true").lower() == "true",
+            quotex_headless=os.getenv("QUOTEX_HEADLESS", "false").lower() == "true",
             telegram_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
             allowed_users=allowed_list,
             min_confidence=int(os.getenv("MIN_CONFIDENCE", "50")),
@@ -79,4 +86,5 @@ class Settings:
             news_filter_enabled=os.getenv("NEWS_FILTER_ENABLED", "true").lower() == "true",
             news_window_minutes=int(os.getenv("NEWS_WINDOW_MINUTES", "30")),
             news_refresh_hours=int(os.getenv("NEWS_REFRESH_HOURS", "6")),
+            mock_signal_interval=int(os.getenv("MOCK_SIGNAL_INTERVAL", "60")),
         )
