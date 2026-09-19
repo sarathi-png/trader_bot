@@ -1,13 +1,16 @@
 python-dotenv>=1.0.0
-pyquotex>=1.0.0
+# pyquotex is NOT published on PyPI - it must be installed from GitHub.
+# Pinned to the exact commit that is installed in your local .venv (v1.1.0).
+pyquotex @ git+https://github.com/cleitonleonel/pyquotex.git@1afdd67ea7997de2f1310e66066ae0933843f2ea
 python-telegram-bot>=20.0
-pandas-ta>=0.3.14
+# PyPI only has beta releases of pandas-ta (0.4.67b0, 0.4.71b0); 0.3.14 no longer exists.
+# 0.4.71b0 needs pandas>=2.3.2 and numba==0.61.2 (which caps numpy<2.3).
+pandas-ta==0.4.71b0
+pandas>=2.3.2
+numpy==2.2.6
 aiosqlite>=0.19.0
 APScheduler>=3.10.0
 playwright>=1.40.0
 websockets>=12.0
 cloudscraper>=1.2.71
 beautifulsoup4>=4.12.0
-pandas-ta==0.3.14
-pandas==2.2.3
-numpy==2.2.6

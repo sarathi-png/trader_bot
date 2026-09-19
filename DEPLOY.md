@@ -1,5 +1,23 @@
 # DEPLOY.md — Oracle Cloud Always Free (no-sleep, $0) deployment
 
+---
+
+## VERIFIED APPENDIX — 2026-09-19 (this session)
+
+**Status:** Build fixed (`pyquotex` git source in `requirements.txt`); `.venv` rebuilt; `run.py --login` verified (SSID saved); `.gitignore` excludes `.env`/`.venv`/session.
+
+**Verified commands:**
+- `.venv\Scripts\python.exe run.py --login` → real auth (SSID captured)
+- `.venv\Scripts\python.exe run.py --mock` → mock signals
+- `git push origin master` after fixing `requirements.txt`
+
+**Host Variables (do NOT upload `.env`):**
+`QUOTEX_EMAIL`, `QUOTEX_PASSWORD`, `QUOTEX_SSID`, `QUOTEX_DEMO`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USERS`, `MIN_CONFIDENCE`, `MIN_PAYOUT`, `DB_PATH`, `BLOCKED_HOURS`, `NEWS_FILTER_ENABLED`
+
+**Security:** Rotate Quotex password / Telegram token after any exposure; `.env` never committed.
+
+---
+
 Target: run the bot 24/7 on an **Oracle Cloud Always Free** VM that never
 sleeps, then roll out **demo → live** market data.
 
