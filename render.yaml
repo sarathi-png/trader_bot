@@ -1,0 +1,41 @@
+services:
+  quotex-signal-bot:
+    build:
+      dockerfile: Dockerfile
+    env:
+      - QUOTEX_DEMO=true
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_ALLOWED_USERS=${TELEGRAM_ALLOWED_USERS}
+      - MIN_CONFIDENCE=${MIN_CONFIDENCE:-25}
+      - MIN_PAYOUT=${MIN_PAYOUT:-80}
+      - MAX_SIGNALS_PER_DAY=${MAX_SIGNALS_PER_DAY:-15}
+      - MIN_CONFLUENCE_CATEGORIES=${MIN_CONFLUENCE_CATEGORIES:-3}
+      - CONFLUENCE_MIN_SCORE=${CONFLUENCE_MIN_SCORE:-60}
+      - ENABLE_ADX_FILTER=${ENABLE_ADX_FILTER:-true}
+      - ENABLE_CANDLESTICK_PATTERNS=${ENABLE_CANDLESTICK_PATTERNS:-true}
+      - ENABLE_SESSION_FILTER=${ENABLE_SESSION_FILTER:-false}
+      - WEBSOCKET_PORT=${WEBSOCKET_PORT:-8765}
+      - WEBSOCKET_ENABLED=${WEBSOCKET_ENABLED:-true}
+      - MOCK_SIGNAL_INTERVAL=${MOCK_SIGNAL_INTERVAL:-60}
+      - DB_PATH=${DB_PATH:-data/signals.db}
+      - DB_RETENTION_DAYS=${DB_RETENTION_DAYS:-8}
+      - BLOCKED_HOURS=${BLOCKED_HOURS:-1,11,17,20}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_FILE=${LOG_FILE:-logs/bot.log}
+      - SESSIONS_DIR=${SESSIONS_DIR:-sessions}
+      - NEWS_FILTER_ENABLED=${NEWS_FILTER_ENABLED:-true}
+      - NEWS_WINDOW_MINUTES=${NEWS_WINDOW_MINUTES:-30}
+    envFromFile:
+      - .env
+    volumes:
+      - data:/app/data
+      - sessions:/app/sessions
+      - logs:/app/logs
+    ports:
+      - 8765:8765
+    startCommand: python run.py
+
+volumes:
+  data:
+  sessions:
+  logs:
