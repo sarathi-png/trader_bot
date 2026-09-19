@@ -22,6 +22,12 @@ from strategies import ADXFilter, CandlestickPatternDetector
 from tg_bot.bot import TelegramBot
 
 try:
+    from flask import Flask
+    HAS_FLASK = True
+except ImportError:
+    HAS_FLASK = False
+
+try:
     import websockets
     HAS_WEBSOCKETS = True
 except ImportError:
@@ -76,6 +82,7 @@ class QuotexSignalBot:
         self._last_signal: dict = {}
         self._connected = False
         self._collection_started = False
+        self._flask_app: Optional[Any] = None
         self._websocket_server: Optional[asyncio.Task] = None
         self._websocket_clients: weakref.WeakSet = weakref.WeakSet()
         self._signal_listeners: List[asyncio.Queue] = []
@@ -452,3 +459,13 @@ class QuotexSignalBot:
             except Exception as e:
                 logger.error(f"Cleanup loop error: {e}")
                 await asyncio.sleep(300)
+
+
+# Optional: expose a minimal /status endpoint for the Vercel -> Render link
+# Import this only when Flask is installed; never blocks Telegram bot
+if HAS_FLASK:
+    from flask import Flask
+    web_app = Flask(__name__)
+    @web_app.route("/status")
+    def status_route():
+        return {"status": "live", "service": "quotex-signal-bot", "version": "1.0.0"}

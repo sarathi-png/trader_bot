@@ -2,5 +2,8 @@
   "framework": "nextjs",
   "installCommand": "cd web && npm install",
   "buildCommand": "cd web && npm run build",
-  "outputDirectory": "web/.next"
+  "outputDirectory": "web/.next",
+  "rewrites": [
+    { "source": "/api/bot/:path*", "destination": "https://trader-bot-91ev.onrender.com/:path*" }
+  ]
 }
