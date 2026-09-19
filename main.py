@@ -1,12 +1,14 @@
 import asyncio
 import logging
 import uuid
+import json
+import weakref
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Optional, Dict, Any, List
 
 from config.settings import Settings
 from database.repository import Database
-from database.models import Signal, User
+from database.models import Signal, User, Candle
 from core.connection import QuotexConnection, MockQuotexConnection
 from core.candles import CandleCollector, MockCandleCollector
 from core.events import EventBus, Events
@@ -14,8 +16,16 @@ from engine.scorer import ConfluenceScorer
 from engine.filter import SessionFilter
 from engine.multitimeframe import MultiTimeframeAnalyzer
 from engine.news_filter import NewsFilter
+from engine.confluence_engine import ConfluenceEngine
+from engine.support_resistance import SupportResistanceDetector
+from strategies import ADXFilter, CandlestickPatternDetector
 from tg_bot.bot import TelegramBot
 
+try:
+    import websockets
+    HAS_WEBSOCKETS = True
+except ImportError:
+    HAS_WEBSOCKETS = False
 
 logger = logging.getLogger(__name__)
 
@@ -26,13 +36,23 @@ class QuotexSignalBot:
         self.use_mock = use_mock
         self.db = Database(settings.db_path)
         self.event_bus = EventBus()
-        self.scorer = ConfluenceScorer(min_confidence=settings.min_confidence)
+        self.scorer = ConfluenceScorer(
+            min_confidence=settings.min_confidence,
+            min_categories=settings.min_confluence_categories,
+            confluence_min_score=settings.confluence_min_score,
+        )
         self.session_filter = SessionFilter(blocked_hours=settings.blocked_hours)
         self.mtf_analyzer = MultiTimeframeAnalyzer()
         self.news_filter = NewsFilter(
             window_minutes=settings.news_window_minutes,
             refresh_hours=settings.news_refresh_hours,
         )
+        self.confluence_engine = ConfluenceEngine(
+            min_categories=settings.min_confluence_categories,
+            min_score=settings.confluence_min_score,
+        )
+        self.sr_detector = SupportResistanceDetector()
+
         self.telegram_bot = TelegramBot(settings, self.db)
         self.telegram_bot.handlers.connection_status_provider = self.get_connection_status
 
@@ -56,10 +76,12 @@ class QuotexSignalBot:
         self._last_signal: dict = {}
         self._connected = False
         self._collection_started = False
+        self._websocket_server: Optional[asyncio.Task] = None
+        self._websocket_clients: weakref.WeakSet = weakref.WeakSet()
+        self._signal_listeners: List[asyncio.Queue] = []
 
     @staticmethod
     def _parse_duration_minutes(duration: str) -> int:
-        """Parse a duration string like '3min' to minutes (default 3)."""
         if not duration:
             return 3
         try:
@@ -81,9 +103,6 @@ class QuotexSignalBot:
             self._connected = True
             self._collection_started = True
         else:
-            # Non-fatal: keep Telegram and the scheduler alive even if the
-            # first connection attempt fails. A watchdog retries in the
-            # background and starts candle collection once connected.
             connected = await self.connection.connect()
             if connected:
                 self._connected = True
@@ -105,13 +124,17 @@ class QuotexSignalBot:
         self._cleanup_task = asyncio.create_task(self._cleanup_loop())
         self._result_task = asyncio.create_task(self._result_tracking_loop())
 
+        if self.settings.websocket_enabled and HAS_WEBSOCKETS:
+            self._websocket_server = asyncio.create_task(self._websocket_loop())
+            logger.info("WebSocket server started")
+        elif not HAS_WEBSOCKETS:
+            logger.warning("WebSocket enabled but 'websockets' package not installed")
+
         logger.info("Bot started successfully")
 
         await asyncio.Event().wait()
 
     async def _connection_watchdog(self):
-        """Retry the live Quotex connection until it succeeds, then start
-        candle collection. Runs only in live mode."""
         while self.running:
             if self._connected:
                 return
@@ -129,7 +152,6 @@ class QuotexSignalBot:
             await asyncio.sleep(60)
 
     def get_connection_status(self) -> dict:
-        """Current connection state for /status."""
         if self.use_mock:
             return {"connected": True, "mode": "mock", "collection_started": True}
         return {
@@ -148,6 +170,8 @@ class QuotexSignalBot:
             self._result_task.cancel()
         if self._watchdog_task:
             self._watchdog_task.cancel()
+        if self._websocket_server:
+            self._websocket_server.cancel()
         if hasattr(self.candle_collector, "stop_collection"):
             await self.candle_collector.stop_collection()
         await self.telegram_bot.stop()
@@ -159,13 +183,110 @@ class QuotexSignalBot:
     async def _on_signal_generated(self, signal: Signal):
         await self.db.save_signal(signal)
         await self.telegram_bot.broadcast_signal(signal)
+        await self._broadcast_to_clients(signal)
         logger.info(f"Signal generated: {signal.asset} {signal.direction} ({signal.confidence}%)")
+
+    async def _broadcast_to_clients(self, signal: Signal):
+        """Broadcast a new signal to all connected WebSocket clients."""
+        message = json.dumps({
+            "type": "signal",
+            "data": {
+                "id": signal.id,
+                "asset": signal.asset,
+                "direction": signal.direction,
+                "confidence": signal.confidence,
+                "strategies": signal.strategies,
+                "duration": signal.duration,
+                "mtf_trend": signal.mtf_trend,
+                "payout": signal.payout,
+                "status": signal.status,
+            }
+        })
+        for queue in self._signal_listeners:
+            try:
+                await queue.put(message)
+            except Exception:
+                pass
+
+    async def _websocket_loop(self):
+        """WebSocket server for real-time signal broadcasting."""
+        import websockets
+
+        async def handler(websocket, path):
+            logger.info("WebSocket client connected")
+            queue: asyncio.Queue = asyncio.Queue()
+            self._signal_listeners.append(queue)
+            try:
+                # Send current status
+                await websocket.send(json.dumps({
+                    "type": "status",
+                    "data": self.get_connection_status()
+                }))
+                async for message in websocket:
+                    data = json.loads(message)
+                    if data.get("type") == "ping":
+                        await websocket.send(json.dumps({"type": "pong"}))
+                    elif data.get("type") == "history":
+                        await self._send_history(websocket)
+            except Exception:
+                pass
+            finally:
+                self._signal_listeners.remove(queue)
+                logger.info("WebSocket client disconnected")
+
+        try:
+            async with websockets.serve(handler, "0.0.0.0", self.settings.websocket_port):
+                logger.info(f"WebSocket server listening on port {self.settings.websocket_port}")
+                await asyncio.Event().wait()
+        except Exception as e:
+            logger.error(f"WebSocket server error: {e}")
+
+    async def _send_history(self, websocket):
+        """Send recent signal history to a WebSocket client."""
+        try:
+            history = await self.db.get_signal_history(days=7)
+            signals = []
+            for s in history:
+                signals.append({
+                    "id": s.id,
+                    "asset": s.asset,
+                    "direction": s.direction,
+                    "confidence": s.confidence,
+                    "strategies": s.strategies,
+                    "duration": s.duration,
+                    "status": s.status,
+                    "created_at": s.created_at.isoformat() if s.created_at else None,
+                })
+            await websocket.send(json.dumps({
+                "type": "history",
+                "data": signals
+            }))
+        except Exception as e:
+            logger.error(f"Failed to send history: {e}")
+
+    async def _is_session_tradable(self) -> bool:
+        """Check if current UTC time is within trading session."""
+        if not self.settings.enable_session_filter:
+            return True
+        current_hour = datetime.now(timezone.utc).hour
+        current_minute = datetime.now(timezone.utc).minute
+        current_time_minutes = current_hour * 60 + current_minute
+        start_minutes = self.settings.session_minutes_start * 60
+        end_minutes = self.settings.session_minutes_end * 60
+        if start_minutes <= end_minutes:
+            return start_minutes <= current_time_minutes <= end_minutes
+        else:
+            return current_time_minutes >= start_minutes or current_time_minutes <= end_minutes
 
     async def _analysis_loop(self):
         while self.running:
             try:
                 if self.settings.news_filter_enabled:
                     await self.news_filter.refresh()
+
+                if not await self._is_session_tradable():
+                    await asyncio.sleep(30)
+                    continue
 
                 assets = await self.db.get_active_assets()
                 for asset in assets:
@@ -189,6 +310,37 @@ class QuotexSignalBot:
                     if not confirmed or confidence < self.settings.min_confidence:
                         continue
 
+                    # Extract ADX and candlestick pattern data from indicators
+                    adx_value = float(indicators.get("ADX_FILTER", {}).get("adx", 0))
+                    candle_patterns = indicators.get("CANDLESTICK_PATTERNS", {}).get("patterns", [])
+
+                    # Run full confluence evaluation
+                    if self.settings.enable_adx_filter or self.settings.enable_candlestick_patterns:
+                        approved, category_scores, confluence_score, agreeing = (
+                            self.scorer.evaluate_confluence(
+                                candles=candles,
+                                strategy_results=[r for r in [
+                                    self.scorer.strategies[0].evaluate(candles),
+                                    self.scorer.strategies[1].evaluate(candles),
+                                    self.scorer.strategies[2].evaluate(candles),
+                                    self.scorer.strategies[3].evaluate(candles),
+                                    self.scorer.strategies[4].evaluate(candles),
+                                    self.scorer.strategies[5].evaluate(candles),
+                                    self.scorer.strategies[6].evaluate(candles),
+                                ] if r.direction != "NONE"],
+                                mtf_trend=mtf_trend,
+                                adx_value=adx_value,
+                                candle_patterns=candle_patterns,
+                            )
+                        )
+                        if not approved or confluence_score < self.settings.confluence_min_score:
+                            logger.debug(
+                                f"Confluence rejected {asset.name}: {agreeing}/5 categories, "
+                                f"score={confluence_score}"
+                            )
+                            continue
+                        confidence = max(confidence, confluence_score)
+
                     if self.settings.news_filter_enabled:
                         now = datetime.now(timezone.utc)
                         if self.news_filter.is_blocked(now):
@@ -202,9 +354,6 @@ class QuotexSignalBot:
                     if today_count >= self.settings.max_signals_per_day:
                         continue
 
-                    # Per-user durations: generate one signal per duration that
-                    # any enabled user has configured, and let delivery filter
-                    # users by their own duration setting.
                     durations = await self.db.get_active_user_durations()
                     if not durations:
                         durations = [self.settings.durations[1]]
@@ -246,20 +395,15 @@ class QuotexSignalBot:
                         await self.db.update_signal_status(signal.id, "SKIP")
                         continue
 
-                    # Priority 2: grade the real trade window, not the pre-entry gap.
-                    # 1) When the pre-entry gap ends (entry_time), capture the actual
-                    #    entry price the user would realistically get.
                     if not signal.actual_entry_price:
                         entry_ts = int(signal.entry_time.timestamp())
                         entry_candle = await self.db.get_candle_at(signal.asset, entry_ts)
                         if entry_candle is None:
-                            # Grading candle not available yet; try again next pass.
                             continue
                         signal.actual_entry_price = entry_candle.close
                         await self.db.save_signal(signal)
                         continue
 
-                    # 2) Real expiry = entry_time + duration; grade at THAT timestamp.
                     duration_minutes = self._parse_duration_minutes(signal.duration)
                     expiry_dt = signal.entry_time + timedelta(minutes=duration_minutes)
                     if datetime.now(timezone.utc) < expiry_dt:
@@ -281,6 +425,10 @@ class QuotexSignalBot:
                     signal.status = status
                     signal.exit_price = candle.close
                     await self.telegram_bot.broadcast_result(signal)
+                    self.scorer.update_strategy_performance(
+                        signal.strategies[0] if signal.strategies else "",
+                        won
+                    )
                     logger.info(
                         f"Trade result: {signal.asset} {signal.direction} -> {status} "
                         f"(actual_entry={signal.actual_entry_price:.5f}, exit={candle.close:.5f}, "

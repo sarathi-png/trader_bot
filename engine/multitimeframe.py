@@ -8,9 +8,11 @@ logger = logging.getLogger(__name__)
 
 
 class MultiTimeframeAnalyzer:
-    def __init__(self, ema_period: int = 20, ema_period_15m: int = 10):
+    def __init__(self, ema_period: int = 20, ema_period_15m: int = 10,
+                 ema_period_1h: int = 14):
         self.ema_period = ema_period
         self.ema_period_15m = ema_period_15m
+        self.ema_period_1h = ema_period_1h
 
     def resample(self, candles: List[Candle], minutes: int) -> List[Candle]:
         if not candles:
@@ -74,6 +76,7 @@ class MultiTimeframeAnalyzer:
     def analyze(self, candles_1min: List[Candle]) -> Tuple[str, int]:
         trend_5m = "NEUTRAL"
         trend_15m = "NEUTRAL"
+        trend_1h = "NEUTRAL"
 
         candles_5m = self.resample(candles_1min, 5)
         if len(candles_5m) >= self.ema_period + 3:
@@ -83,21 +86,26 @@ class MultiTimeframeAnalyzer:
         if len(candles_15m) >= self.ema_period_15m + 3:
             trend_15m = self.get_trend(candles_15m, self.ema_period_15m)
 
-        if trend_5m == "NEUTRAL" and trend_15m == "NEUTRAL":
+        candles_1h = self.resample(candles_1min, 60)
+        if len(candles_1h) >= self.ema_period_1h + 3:
+            trend_1h = self.get_trend(candles_1h, self.ema_period_1h)
+
+        trends = [t for t in [trend_5m, trend_15m, trend_1h] if t != "NEUTRAL"]
+        if not trends:
             return "NEUTRAL", 0
 
-        if trend_5m == trend_15m:
-            return trend_5m, 8
+        up_count = trends.count("UP")
+        down_count = trends.count("DOWN")
 
-        if trend_5m != "NEUTRAL" and trend_15m == "NEUTRAL":
-            return trend_5m, 4
-
-        if trend_5m == "NEUTRAL" and trend_15m != "NEUTRAL":
-            return trend_15m, 5
-
-        if trend_5m == "UP" and trend_15m == "DOWN":
-            return "CONFLICT", -5
-        elif trend_5m == "DOWN" and trend_15m == "UP":
+        if up_count >= 2:
+            return "UP", 8
+        elif down_count >= 2:
+            return "DOWN", 8
+        elif up_count == 1 and down_count == 0:
+            return "UP", 5
+        elif down_count == 1 and up_count == 0:
+            return "DOWN", 5
+        elif up_count == 1 and down_count == 1:
             return "CONFLICT", -5
 
         return "NEUTRAL", 0

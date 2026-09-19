@@ -48,6 +48,17 @@ def bbands(close, length=20, std=2.0):
     })
 
 
+def dm(high, low, length=14):
+    plus_dm = high.diff()
+    minus_dm = -low.diff()
+    plus_dm = plus_dm.where((plus_dm > minus_dm) & (plus_dm > 0), 0.0)
+    minus_dm = minus_dm.where((minus_dm > plus_dm) & (minus_dm > 0), 0.0)
+    return pd.DataFrame({
+        f"DI+_{length}": plus_dm.ewm(alpha=1/length, min_periods=length).mean(),
+        f"DI-{length}": minus_dm.ewm(alpha=1/length, min_periods=length).mean(),
+    })
+
+
 def adx(high, low, close, length=14):
     plus_dm = high.diff()
     minus_dm = -low.diff()

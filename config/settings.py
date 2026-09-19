@@ -23,6 +23,13 @@ class Settings:
     min_confidence: int = 50
     min_payout: int = 80
     max_signals_per_day: int = 15
+    min_confluence_categories: int = 3
+    confluence_min_score: int = 60
+    enable_adx_filter: bool = True
+    enable_candlestick_patterns: bool = True
+    enable_session_filter: bool = True
+    session_minutes_start: int = 8
+    session_minutes_end: int = 17
 
     # Database
     db_path: str = "data/signals.db"
@@ -52,6 +59,10 @@ class Settings:
     # Mock mode
     mock_signal_interval: int = 60
 
+    # WebSocket
+    websocket_port: int = 8765
+    websocket_enabled: bool = True
+
     # Logging
     log_level: str = "INFO"
     log_file: str = "logs/bot.log"
@@ -77,6 +88,13 @@ class Settings:
             min_confidence=int(os.getenv("MIN_CONFIDENCE", "50")),
             min_payout=int(os.getenv("MIN_PAYOUT", "80")),
             max_signals_per_day=int(os.getenv("MAX_SIGNALS_PER_DAY", "15")),
+            min_confluence_categories=int(os.getenv("MIN_CONFLUENCE_CATEGORIES", "3")),
+            confluence_min_score=int(os.getenv("CONFLUENCE_MIN_SCORE", "60")),
+            enable_adx_filter=os.getenv("ENABLE_ADX_FILTER", "true").lower() == "true",
+            enable_candlestick_patterns=os.getenv("ENABLE_CANDLESTICK_PATTERNS", "true").lower() == "true",
+            enable_session_filter=os.getenv("ENABLE_SESSION_FILTER", "true").lower() == "true",
+            session_minutes_start=int(os.getenv("SESSION_MINUTES_START", "8")),
+            session_minutes_end=int(os.getenv("SESSION_MINUTES_END", "17")),
             db_path=os.getenv("DB_PATH", "data/signals.db"),
             db_retention_days=int(os.getenv("DB_RETENTION_DAYS", "8")),
             sessions_dir=os.getenv("SESSIONS_DIR", "sessions"),
@@ -87,4 +105,6 @@ class Settings:
             news_window_minutes=int(os.getenv("NEWS_WINDOW_MINUTES", "30")),
             news_refresh_hours=int(os.getenv("NEWS_REFRESH_HOURS", "6")),
             mock_signal_interval=int(os.getenv("MOCK_SIGNAL_INTERVAL", "60")),
+            websocket_port=int(os.getenv("WEBSOCKET_PORT", "8765")),
+            websocket_enabled=os.getenv("WEBSOCKET_ENABLED", "true").lower() == "true",
         )
