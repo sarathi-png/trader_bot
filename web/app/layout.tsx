@@ -1,8 +1,5 @@
 import type { Metadata } from 'next';
-import { Inter } from 'next/font/google';
 import './globals.css';
-
-const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
   title: 'Quotex Signal Bot — Dashboard',
@@ -12,7 +9,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className={inter.className}>
+      <body className="bg-slate-900 text-white">
         <header className="bg-primary-700 text-white px-6 py-4 shadow-lg">
           <div className="max-w-7xl mx-auto flex items-center justify-between">
             <h1 className="text-xl font-bold">📊 Quotex Signal Bot</h1>
