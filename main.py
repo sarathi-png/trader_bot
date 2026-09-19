@@ -198,11 +198,6 @@ class QuotexSignalBot:
                                 logger.info(f"News filter: blocked signal {asset.name} — {nearest.country} {nearest.title} in {mins}min")
                             continue
 
-                    key = f"{asset.name}:{direction}"
-                    last = self._last_signal.get(key)
-                    if last and (datetime.now(timezone.utc) - last).total_seconds() < 300:
-                        continue
-
                     today_count = await self.db.get_today_signal_count()
                     if today_count >= self.settings.max_signals_per_day:
                         continue
@@ -215,6 +210,11 @@ class QuotexSignalBot:
                         durations = [self.settings.durations[1]]
 
                     for duration in durations:
+                        key = f"{asset.name}:{direction}:{duration}"
+                        last = self._last_signal.get(key)
+                        if last and (datetime.now(timezone.utc) - last).total_seconds() < 300:
+                            continue
+
                         signal = Signal(
                             id=str(uuid.uuid4()),
                             asset=asset.name,

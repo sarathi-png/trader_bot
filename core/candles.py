@@ -245,7 +245,7 @@ class MockCandleCollector:
     _TREND_LEN = (70, 100)
     _TREND_DRIFT = 0.0005
     _TREND_NOISE = 0.0004
-    _DIP_LEN = 8
+    _DIP_LEN = 15
     _DIP_DRIFT = 0.003
     _DIP_NOISE = 0.0003
     _B1_DRIFT = 0.002
@@ -414,6 +414,7 @@ class MockCandleCollector:
         for asset in self.assets:
             await self.simulate_candles(asset.name, self._SEED_COUNT)
         self._sim_task = asyncio.create_task(self._simulation_loop())
+        logger.info(f"Mock collection started for {len(self.assets)} assets")
 
     async def stop_collection(self):
         if self._sim_task:

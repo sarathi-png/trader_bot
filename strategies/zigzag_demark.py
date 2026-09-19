@@ -11,15 +11,18 @@ class ZigZagDeMarkerStrategy(BaseStrategy):
 
     def __init__(self, zz_depth: int = 12, rsi_period: int = 14,
                  rsi_overbought: int = 70, rsi_oversold: int = 30,
-                 zz_retrace_pct: float = 0.003, zz_atr_mult: float = 0.5):
+                 zz_retrace_pct: float = 0.005, zz_atr_mult: float = 0.8,
+                 zz_max_lookback: int = 50):
         self.zz_depth = zz_depth
         self.rsi_period = rsi_period
         self.rsi_overbought = rsi_overbought
         self.rsi_oversold = rsi_oversold
         # ZigZag reversal confirmation: a pivot only counts as a swing once
-        # price has retraced from it by at least max(pct*price, atr_mult*ATR).
+        # price has retraced from it by at least max(pct*price, atr_mult*ATR),
+        # and the pivot must be within the most recent `zz_max_lookback` bars.
         self.zz_retrace_pct = zz_retrace_pct
         self.zz_atr_mult = zz_atr_mult
+        self.zz_max_lookback = zz_max_lookback
 
     def evaluate(self, candles: List[Candle]) -> StrategyResult:
         if len(candles) < max(self.zz_depth, self.rsi_period) + 10:
@@ -50,14 +53,14 @@ class ZigZagDeMarkerStrategy(BaseStrategy):
         prev_close = df["close"].iloc[-2]
 
         bullish_reversal = (
-            swing_low is not None and
+            swing_low and
             curr_close > prev_close and
             prev_rsi < self.rsi_oversold + 10 and
             curr_rsi > prev_rsi
         )
 
         bearish_reversal = (
-            swing_high is not None and
+            swing_high and
             curr_close < prev_close and
             prev_rsi > self.rsi_overbought - 10 and
             curr_rsi < prev_rsi
@@ -91,6 +94,7 @@ class ZigZagDeMarkerStrategy(BaseStrategy):
         contain a local min/max — a retracement must actually occur.
         """
         n = self.zz_depth
+        max_lookback = self.zz_max_lookback
         if len(df) < n + 2:
             return False
         threshold = self._reversal_threshold(df, atr)
@@ -100,14 +104,21 @@ class ZigZagDeMarkerStrategy(BaseStrategy):
         lows = df["low"].tolist()
         closes = df["close"].tolist()
         total = len(df)
+        start = max(total - 1 - max_lookback, n)
 
-        # Scan backward for the most recent confirmed pivot low.
-        for i in range(total - 2, max(n - 1, 0), -1):
+        # Scan backward for the most recent confirmed pivot low
+        # within the lookback window. A pivot must be a genuine
+        # local minimum with a retracement that actually occurred.
+        for i in range(total - 2, start, -1):
             left = lows[max(0, i - n):i]
             right = lows[i + 1:min(total, i + n + 1)]
             if not left or not right:
                 continue
             if lows[i] >= min(left) or lows[i] >= min(right):
+                continue
+            # The pivot must be at least `n` bars from the current bar
+            # so we're not reacting to a very recent wick.
+            if total - 1 - i < n:
                 continue
             # A retracement upward from the pivot must have occurred since.
             if max(closes[i + 1:]) >= lows[i] + threshold:
@@ -118,6 +129,7 @@ class ZigZagDeMarkerStrategy(BaseStrategy):
         """Genuine swing high: a local maximum confirmed only after price has
         retraced downward by at least the reversal threshold from that high."""
         n = self.zz_depth
+        max_lookback = self.zz_max_lookback
         if len(df) < n + 2:
             return False
         threshold = self._reversal_threshold(df, atr)
@@ -127,13 +139,18 @@ class ZigZagDeMarkerStrategy(BaseStrategy):
         highs = df["high"].tolist()
         closes = df["close"].tolist()
         total = len(df)
+        start = max(total - 1 - max_lookback, n)
 
-        for i in range(total - 2, max(n - 1, 0), -1):
+        # Scan backward for the most recent confirmed pivot high
+        # within the lookback window.
+        for i in range(total - 2, start, -1):
             left = highs[max(0, i - n):i]
             right = highs[i + 1:min(total, i + n + 1)]
             if not left or not right:
                 continue
             if highs[i] <= max(left) or highs[i] <= max(right):
+                continue
+            if total - 1 - i < n:
                 continue
             if min(closes[i + 1:]) <= highs[i] - threshold:
                 return True

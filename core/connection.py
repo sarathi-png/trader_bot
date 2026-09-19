@@ -244,15 +244,6 @@ class QuotexConnection:
     def on_candle(self, asset: str, handler: Callable):
         self.candle_handlers[asset] = handler
 
-    async def listen_for_candles(self):
-        if not self.connected:
-            return
-        try:
-            while self.connected:
-                await asyncio.sleep(1)
-        except Exception as e:
-            logger.error(f"Candle listener error: {e}")
-            self.connected = False
 
 
 class MockQuotexConnection:
@@ -325,6 +316,3 @@ class MockQuotexConnection:
     def on_candle(self, asset: str, handler):
         self.candle_handlers[asset] = handler
 
-    async def listen_for_candles(self):
-        while self.connected:
-            await asyncio.sleep(1)
