@@ -38,6 +38,11 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 
+# --- Bundled dependencies (installed to Lib/site-packages) ---
+Lib/
+Include/
+Scripts/
+
 # --- Tooling ---
 .idea/
 .vscode/
