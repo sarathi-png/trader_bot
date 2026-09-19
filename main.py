@@ -469,3 +469,7 @@ if HAS_FLASK:
     @web_app.route("/status")
     def status_route():
         return {"status": "live", "service": "quotex-signal-bot", "version": "1.0.0"}
+
+    # Start Flask server on separate port so Telegram bot / pyquotex stay independent
+    import threading
+    threading.Thread(target=lambda: web_app.run(host="0.0.0.0", port=8765, debug=False, threaded=True), daemon=True).start()
