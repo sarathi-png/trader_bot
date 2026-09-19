@@ -34,7 +34,6 @@ export default function Dashboard() {
 
   return (
     <div>
-      <h2 className="text-2xl font-bold mb-4">Live Signal Dashboard</h2>
       <div className="flex items-center gap-2 mb-4">
         <span className={`w-3 h-3 rounded-full ${wsConnected ? 'bg-green-500' : 'bg-red-500'}`}></span>
         <span className="text-sm">{wsConnected ? 'Live' : 'Disconnected'}</span>
